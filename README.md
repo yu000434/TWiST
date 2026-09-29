@@ -1,147 +1,180 @@
 # TWiST
 
-TWiST (**TW**AS **i**n p**S**eudo**T**ime) is an R package for single-cell TWAS analysis of heterogeneous cell types, where gene expression and eQTL effects can vary along a continuous cell state within the cell type. 
-Cell state is defined by pseudotime. This package implements two main analyses:
+TWiST (**TW**AS **i**n p**S**eudo**T**ime) is an R package for single-cell TWAS analysis of heterogeneous cell types, where gene expression and eQTL effects can vary along a continuous cell state within the cell type. Cell state is defined by pseudotime. This package implements two main analyses:
 
-**Stage 1:** Train models to predict gene expression using cis-SNPs using single-cell eQTL data. Gene expression is modeled directly as count data. 
+**Stage 1:** Train models to predict genetically regulated gene expression from cis-SNPs using TWiST, fast-TWiST, or FPCA.
 
-**Stage 2:**: Conduct association analysis between gene expression and trait. 
+**Stage 2:** Test the association between genetically regulated gene expression and a trait using GWAS summary statistics.
 
-<img src="/example_data/overview.png" alt="overview" width="800"/>
-
-**We have provided pre-trained models for CD4+ T cells, CD8+ T cells, and B cells. Users who are interested in these cell types may use the pre-trained models and skip Stage 1 (see example below).**
+<img src="example_data/overview.png" alt="TWiST overview" width="800"/>
 
 ## 1. Installation
 
-Install `TWiST` from GitHUb:
-```
-devtools::install_github("gqi/TWiST")
+Install `TWiST` with fast-TWiST and FPCA from GitHub:
+
+```r
+devtools::install_github("yu000434/TWiST", ref="fast-twist-fpca")
 ```
 
-In addition, install the `plink2R` package to read genotype data (PLINK files) into R:
-```
+In addition, install `plink2R` to read genotype data in PLINK format:
+
+```r
 devtools::install_github("gabraham/plink2R/plink2R")
 ```
 
-## 2. Pre-trained models
+## 2. Example data
 
-Download pre-trained models for three immune cell types from folder `pretrained_models`: `twist_weights_T_CD4.rda` (CD4+ T cells), `twist_weights_T_CD8.rda` (CD8+ T cells), `twist_weights_T_CD8.rda` (B cells).
+The example below trains all three methods for one gene, HLA-A, runs association analysis, and combines the fast-TWiST and FPCA results.
 
-Each `.rda` file includes three objects:
-* `wgtlist`: Information of genes for which the model has been trained. A data frame of five columns:
-    * `ID`: Gene ID
-    * `CHR`: Chromosome
-    * `P0`: Gene start
-    * `P1`: Gene end
-    * `tss`: Transcription start site
-* `weights_pred`: Pre-trained prediction models. A list of which each entry is a gene, in the same order as `wgtlist$ID`. For each genes, the following four entries are available:
-    * `Wmat`: Coefficients of pre-trained prediction models. A matrix of (number of SNPs) x (number of B-spline bases).
-    * `knots`: Internal knots for B-spline basis functions that are used to model model SNP effects on gene expression. (boundary knots 0 and 1 are not included).
-    * `degree`: Degree of B-spline basis functions. 
-    * `n`: Number of cells in the eQTL data for model training.
-* `bim_train`: Information of model SNPs in `weights_pred` in the format of PLINK bim file. A data frame of the following columns:
-    * `CHR`: Chromosome
-    * `SNP`: SNP ID
-    * `cM`: SNP position in centimorgan
-    * `BP`: SNP position in base pair
-    * `A1`: Effect allele. Coefficients in `weights_pred` are with respect to `A1`. <! -- PLINK bed file counts the number of A1 allele --> 
-    * `A2`: Other allele
+Download this repository and run the example from its main directory. The required files are provided in [example_data](example_data):
 
-## 3. Example: Association analysis
-To run this example, download additional datasets provided in folder `example_data`. They include:
-* `RA_sumstats_chr6.txt`: GWAS summary statistics for rheumatoid arthritis, chromosome 6 (Ishigaki et al, Nature Genetics 2022).
-* `1000G.EUR.6.{bed,bim,fam}`: 1000 Genomes European genotype data, chromosome 6. Download all the chromosomes from [here](https://data.broadinstitute.org/alkesgroup/FUSION/LDREF.tar.bz2).
+* `example_data_stage1training.rda`: Real chromosome 6 genotypes from the European subset of 1000 Genomes, with simulated expression counts, pseudotime, library sizes, and covariates.
+* `RA_sumstats_chr6.txt`: GWAS summary statistics for rheumatoid arthritis, chromosome 6 (Ishigaki et al., Nature Genetics 2022).
+* `1000G.EUR.6.{bed,bim,fam}`: 1000 Genomes European genotype data used as the LD reference.
 
-First, load required packages
-```
-library(dplyr)
-library(plink2R)
+Load the required packages and training data:
+
+```r
 library(TWiST)
+library(plink2R)
+load("example_data/example_data_stage1training.rda")
 ```
 
-Read GWAS summary statistics into R. Compute the effective sample size defined as ncases*ncontrols/(ncases+ncontrols).
+The training dataset contains:
+
+* `gene_exp_i`: Expression counts for one gene in 5,000 cells.
+* `geno.cell`: Cell-level genotypes, with cells in rows and cis-SNPs in columns. Row names identify the individual for each cell.
+* `pt`: Pseudotime of the cells, between 0 and 1.
+* `libsize`: Library size of each cell.
+* `covar`: Age, sex, 10 expression PCs, and 10 genotype PCs.
+
+TWiST uses `geno.cell` directly. For fast-TWiST and FPCA, prepare a genotype matrix with one row per individual and a vector giving the genotype row for each cell:
+
+```r
+ids <- unique(rownames(geno.cell))
+donor <- match(rownames(geno.cell), ids)
+geno <- geno.cell[match(ids, rownames(geno.cell)), , drop=FALSE]
 ```
+
+Read the GWAS summary statistics and LD reference. For this case-control study, the effective sample size is `ncases*ncontrols/(ncases+ncontrols)`:
+
+```r
 sumstats <- data.table::fread("example_data/RA_sumstats_chr6.txt")
 ngwas <- 22350*74823/(22350+74823)
-```
-
-Load pre-trained models and subset to chromosome 6 (using CD8+ T cells as an example) 
-```
-# Load weights
-ctype <- "T_CD8"
-load(paste0("pretrained_models/twist_weights_",ctype,".rda"))
-wgtlist.chr <- wgtlist %>% filter(CHR==6)
-weights_pred.chr <- weights_pred[wgtlist.chr$ID]
-```
-
-Load reference genotype data - 1000 Genomes European sample
-```
 genos.chr <- read_plink("example_data/1000G.EUR.6")
 ```
 
-Run TWiST association analysis
+## 3. Training prediction models
+
+### TWiST
+
+Train the spline-based Poisson model using cell-level genotypes:
+
+```r
+set.seed(1)
+model.twist <- twist_train_model(y=gene_exp_i, geno_cell=geno.cell, pt=pt,
+    knots=c(0.25,0.5,0.75), degree=3, nlambda=10,
+    libsize=libsize, covar=covar)
 ```
-res <- twist_association(
-    sumstat=sumstats, wgtlist=wgtlist.chr, weights_pred=weights_pred.chr,
+
+### fast-TWiST
+
+Train the spline-based Poisson model using individual-level summaries:
+
+```r
+set.seed(1)
+model.fast <- fast_twist_train_model(y=gene_exp_i, geno=geno, donor=donor,
+    pt=pt, libsize=libsize, covar=covar, nlambda=10)
+```
+
+### FPCA
+
+Estimate individual expression trajectories using binned Poisson mixed models, then predict their functional principal component scores from cis-SNPs:
+
+```r
+set.seed(1)
+model.fpca <- fpca_train_model(y=gene_exp_i, geno=geno, donor=donor,
+    pt=pt, libsize=libsize, covar=covar)
+```
+
+FPCA uses 50 pseudotime bins and retains components explaining 99% of trajectory variation by default. See `?twist_train_model`, `?fast_twist_train_model`, and `?fpca_train_model` for parameters.
+
+Each model contains `Wmat`: SNP-by-spline coefficients for TWiST and fast-TWiST, or SNP-by-component coefficients for FPCA. Keep the complete model objects, including the basis information needed for association analysis.
+
+## 4. Association analysis
+
+Prepare the gene annotation and collect each method's fitted model in a list named by gene ID:
+
+```r
+wgtlist <- data.frame(ID="ENSG00000206503", CHR=6, P0=29909037,
+                      P1=29913661, tss=29909037)
+weights_pred.twist <- setNames(list(model.twist), wgtlist$ID)
+weights_pred.fast <- setNames(list(model.fast), wgtlist$ID)
+weights_pred.fpca <- setNames(list(model.fpca), wgtlist$ID)
+```
+
+Read the SNP information from the training genotype data. In this example, the training genotypes and LD reference come from the same 1000 Genomes files:
+
+```r
+bim_train <- read.table("example_data/1000G.EUR.6.bim",
+    col.names=c("CHR", "SNP", "cM", "BP", "A1", "A2"))
+```
+
+Run association analysis separately for each method, using the GWAS data and LD reference loaded in Section 2:
+
+```r
+res.twist <- twist_association(
+    sumstat=sumstats, wgtlist=wgtlist, weights_pred=weights_pred.twist,
+    bim_train=bim_train, genos=genos.chr, ngwas=ngwas)
+
+res.fast <- twist_association(
+    sumstat=sumstats, wgtlist=wgtlist, weights_pred=weights_pred.fast,
+    bim_train=bim_train, genos=genos.chr, ngwas=ngwas)
+
+res.fpca <- twist_association(
+    sumstat=sumstats, wgtlist=wgtlist, weights_pred=weights_pred.fpca,
     bim_train=bim_train, genos=genos.chr, ngwas=ngwas)
 ```
 
-View results (type `?twist_association` for definition of the outputs)
-```
-names(res)
-# [1] "out.tbl"   "betal"     "var.betal" "beta"      "var.beta"  "knots"  
+Each result contains an `out.tbl` table with gene information and P values for the global, dynamic, and nonlinear tests. View the results:
 
-str(res$out.tbl)
-# 'data.frame':	80 obs. of  10 variables:
-#  $ ID         : chr  "ENSG00000112679" "ENSG00000170542" "ENSG00000124570" "ENSG00000214113" ...
-#  $ CHR        : int  6 6 6 6 6 6 6 6 6 6 ...
-#  $ P0         : int  291630 2887500 2948393 5102827 10723148 16129356 18224099 24705294 24804513 26104104 ...
-#  $ P1         : int  351355 2903514 2972090 5261172 10731362 16148479 18265054 24721064 24936188 26104518 ...
-#  $ tss        : int  291630 2903514 2972090 5261172 10723148 16129356 18265054 24721064 24936188 26104104 ...
-#  $ sigma2     : num  2.06e-09 2.06e-09 2.06e-09 2.06e-09 2.06e-09 ...
-#  $ p.global   : num  0.779 0.133 0.1534 0.7266 0.0599 ...
-#  $ p.dynamic  : num  0.604 0.655 0.332 0.466 0.167 ...
-#  $ p.nonlinear: num  0.05 0.05 0.05 0.05 0.05 0.05 0.05 0.05 0.05 0.05 ...
-#  $ degree     : num  3 3 3 3 3 3 3 3 3 3 ...
+```r
+results <- rbind(TWiST=res.twist$out.tbl,
+                 fast.TWiST=res.fast$out.tbl, FPCA=res.fpca$out.tbl)
+results[, c("ID", "p.global", "p.dynamic", "p.nonlinear")]
+#                         ID     p.global    p.dynamic  p.nonlinear
+# TWiST      ENSG00000206503 5.654862e-29 4.829743e-19 7.369468e-08
+# fast.TWiST ENSG00000206503 4.343681e-31 9.052337e-21 5.296791e-15
+# FPCA       ENSG00000206503 8.944971e-13 3.537372e-01 5.000000e-02
 ```
 
-Create QQ plots for global, dynamic and nonlinear tests:
-```
-library(qqman)
-par(mfrow=c(1,3))
-qq(res$out.tbl$p.global, main="Global test", ylim=c(0,220))
-qq(res$out.tbl$p.dynamic, main="Dynamic test", ylim=c(0,220))
-qq(res$out.tbl$p.nonlinear, main="Nonlinear test", ylim=c(0,220))
-```
+See `?twist_association` for the full output definition. For multiple genes, collect the fitted models in the same order as `wgtlist$ID` and provide their SNP information in `bim_train`.
 
-<img src="/example_data/QQ_T_CD8_chr6.png" alt="QQ" width="800"/>
+## 5. Combining association results
 
-## 4. Example: Training prediction models
+The `res.fast` and `res.fpca` objects above contain the two methods' association results. Match genes by ID and combine global and dynamic P values separately using the Cauchy combination test:
 
-If you have your own single-cell eQTL data and would like to train your own prediction model, below is an example using simulated data:
+```r
+paired <- merge(res.fast$out.tbl, res.fpca$out.tbl,
+                by="ID", suffixes=c(".fast", ".fpca"))
 
-Load example dataset:
-```
-load("example_data_stage1training.rda")
-```
-
-This dataset includes real genotype data and genotype principal components (PCs) from the European subset of 1000 Genomes (chromosome 6) and simulated gene expression, librarize, and covariates:
-* `gene_exp_i`: Expression count data for one gene.
-* `geno_cell`: Genotype of cis-SNPs, duplicated to cell level (cells from the same individual have the same genotypes).
-* `libsize`: Library size.
-* `covar`: Covariates: age, sex, 10 expression PCs (`PC_{1:10}`), 10 genotype PCs (`genPC_{1:10}`).
-
-Train prediction model (for one gene):
-```
-library(TWiST)
-model <- twist_train_model(y=gene_exp_i, geno_cell=geno.cell, pt=pt, knots=c(0.25,0.5,0.75), 
-                           degree=3, lambda=NULL, nlambda=10, libsize=libsize, covar=covar)
+combined <- data.frame(
+    ID=paired$ID,
+    p.global=cauchy_combine(paired$p.global.fast, paired$p.global.fpca),
+    p.dynamic=cauchy_combine(paired$p.dynamic.fast, paired$p.dynamic.fpca))
+combined
+#                ID     p.global    p.dynamic
+# 1 ENSG00000206503 8.687362e-31 1.810467e-20
 ```
 
-Aggregate models across genes into the format described in the previous section before proceeding to association analysis.
+This step is optional. Nonlinear P values are not combined.
 
-Codes for simulating this example dataset are provided [here](/example_data/simulate_example_training.R).
+## Pre-trained OneK1K models
 
-## 5.Reference
+The [pretrained_models](pretrained_models) folder contains models trained on OneK1K data with the original TWiST method for CD4+ T cells (`twist_weights_T_CD4.rda`), CD8+ T cells (`twist_weights_T_CD8.rda`), and B cells (`twist_weights_B.rda`). These are separate from the simulated training example above.
+
+Each file contains `wgtlist` (gene annotation), `weights_pred` (prediction models named by gene ID), and `bim_train` (training SNP information). Users of these models can skip training. The original association example, including QQ plots, is provided in [example.R](example_data/example.R).
+
+## 6. Reference
 
 Qi G, Lila E, Ji Z, Shojaie A, Battle A, Sun W. Transcriptome-wide association studies at cell state level using single-cell eQTL data. *Cell Genomics* (2026). https://www.cell.com/cell-genomics/fulltext/S2666-979X(25)00316-7.
