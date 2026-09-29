@@ -10,8 +10,8 @@ Authors@R: c(
     )
   )
 Description: Train genetically regulated expression models along continuous
-    cell states using TWiST or fast-TWiST, and test gene-trait associations
-    using GWAS summary statistics.
+    cell states using TWiST, fast-TWiST, or functional principal component
+    analysis, and test gene-trait associations using GWAS summary statistics.
 License: What license is it under?
 Encoding: UTF-8
 LazyData: true
@@ -23,6 +23,9 @@ Imports:
     fda,
     dplyr,
     Rcpp,
+    glmnet,
+    lme4,
+    refund,
     parallel,
     stats
 LinkingTo: Rcpp
