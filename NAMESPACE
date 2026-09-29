@@ -21,8 +21,11 @@ importFrom(stats,
   glm,
   glm.fit,
   median,
+  p.adjust,
+  pchisq,
   poisson,
   residuals,
   sd
 )
+importFrom(utils,head)
 useDynLib(TWiST, .registration = TRUE)

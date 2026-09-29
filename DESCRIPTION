@@ -27,7 +27,8 @@ Imports:
     lme4,
     refund,
     parallel,
-    stats
+    stats,
+    utils
 LinkingTo: Rcpp
 Suggests: MASS, ggplot2
 Config/roxygen2/version: 8.1.0
