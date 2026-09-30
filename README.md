@@ -2,7 +2,7 @@
 
 TWiST (**TW**AS **i**n p**S**eudo**T**ime) is an R package for single-cell TWAS analysis of heterogeneous cell types, where gene expression and eQTL effects can vary along a continuous cell state within the cell type. Cell state is defined by pseudotime. This package implements two main analyses:
 
-**Stage 1:** Train models to predict genetically regulated gene expression from cis-SNPs using TWiST, fast-TWiST, or FPCA.
+**Stage 1:** Train models to predict genetically regulated gene expression from cis-SNPs using `twist_train_model()`. The default method is fast-TWiST; TWiST and FPCA are also available.
 
 **Stage 2:** Test the association between genetically regulated gene expression and a trait using GWAS summary statistics.
 
@@ -48,7 +48,7 @@ The training dataset contains:
 * `libsize`: Library size of each cell.
 * `covar`: Age, sex, 10 expression PCs, and 10 genotype PCs.
 
-TWiST uses `geno.cell` directly. For fast-TWiST and FPCA, prepare a genotype matrix with one row per individual and a vector giving the genotype row for each cell:
+Prepare a genotype matrix with one row per individual and a vector giving the genotype row for each cell. These inputs can be used with all three methods:
 
 ```r
 ids <- unique(rownames(geno.cell))
@@ -66,38 +66,27 @@ genos.chr <- read_plink("example_data/1000G.EUR.6")
 
 ## 3. Training prediction models
 
-### TWiST
-
-Train the spline-based Poisson model using cell-level genotypes:
+Train a prediction model using `twist_train_model()`. By default, fast-TWiST fits the spline-based Poisson model using individual-level summaries:
 
 ```r
 set.seed(1)
-model.twist <- twist_train_model(y=gene_exp_i, geno_cell=geno.cell, pt=pt,
-    knots=c(0.25,0.5,0.75), degree=3, nlambda=10,
-    libsize=libsize, covar=covar)
-```
-
-### fast-TWiST
-
-Train the spline-based Poisson model using individual-level summaries:
-
-```r
-set.seed(1)
-model.fast <- fast_twist_train_model(y=gene_exp_i, geno=geno, donor=donor,
+model.fast <- twist_train_model(y=gene_exp_i, geno=geno, donor=donor,
     pt=pt, libsize=libsize, covar=covar, nlambda=10)
 ```
 
-### FPCA
-
-Estimate individual expression trajectories using binned Poisson mixed models, then predict their functional principal component scores from cis-SNPs:
+Use `method="twist"` for the original TWiST implementation or `method="fpca"` for FPCA:
 
 ```r
 set.seed(1)
-model.fpca <- fpca_train_model(y=gene_exp_i, geno=geno, donor=donor,
-    pt=pt, libsize=libsize, covar=covar)
+model.twist <- twist_train_model(y=gene_exp_i, geno=geno, donor=donor,
+    pt=pt, libsize=libsize, covar=covar, nlambda=10, method="twist")
+
+set.seed(1)
+model.fpca <- twist_train_model(y=gene_exp_i, geno=geno, donor=donor,
+    pt=pt, libsize=libsize, covar=covar, method="fpca")
 ```
 
-FPCA uses 50 pseudotime bins and retains components explaining 99% of trajectory variation by default. See `?twist_train_model`, `?fast_twist_train_model`, and `?fpca_train_model` for parameters.
+FPCA estimates individual trajectories using Poisson mixed models in 50 pseudotime bins and retains components explaining 99% of trajectory variation by default. Component scores are predicted from cis-SNP genotypes. The number of bins and proportion of variation can be set through `nbins` and `pve`. See `?twist_train_model` for parameters.
 
 Each model contains `Wmat`: SNP-by-spline coefficients for TWiST and fast-TWiST, or SNP-by-component coefficients for FPCA. Keep the complete model objects, including the basis information needed for association analysis.
 

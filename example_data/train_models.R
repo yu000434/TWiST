@@ -7,13 +7,13 @@ donor <- match(rownames(geno.cell), ids)
 geno <- geno.cell[match(ids, rownames(geno.cell)), , drop=FALSE]
 
 set.seed(1)
-twist <- twist_train_model(y=gene_exp_i, geno_cell=geno.cell, pt=pt,
+fast <- twist_train_model(y=gene_exp_i, geno=geno, donor=donor, pt=pt,
     libsize=libsize, covar=covar, nlambda=10)
 
 set.seed(1)
-fast <- fast_twist_train_model(y=gene_exp_i, geno=geno, donor=donor, pt=pt,
-    libsize=libsize, covar=covar, nlambda=10)
+twist <- twist_train_model(y=gene_exp_i, geno=geno, donor=donor, pt=pt,
+    libsize=libsize, covar=covar, nlambda=10, method="twist")
 
 set.seed(1)
-fpca <- fpca_train_model(y=gene_exp_i, geno=geno, donor=donor, pt=pt,
-    libsize=libsize, covar=covar)
+fpca <- twist_train_model(y=gene_exp_i, geno=geno, donor=donor, pt=pt,
+    libsize=libsize, covar=covar, method="fpca")
